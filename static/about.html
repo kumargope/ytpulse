@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About Us - StreamPulse | High Speed 4K YouTube Downloader</title>
+  <meta name="description" content="Learn about StreamPulse, the fastest 3D animated YouTube video and MP3 audio downloader with zero login, 4K UHD support, and complete user privacy.">
+  <link rel="canonical" href="https://ytpulse.net/about.html">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+  
+  <style>
+    .page-container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 5rem;
+    }
+    .page-header {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+    .page-title {
+      font-family: var(--font-display);
+      font-size: clamp(2.2rem, 4vw, 3.2rem);
+      font-weight: 900;
+      margin-bottom: 0.8rem;
+    }
+    .about-card {
+      padding: 2.2rem;
+      border-radius: var(--radius-lg);
+      margin-bottom: 2rem;
+      line-height: 1.7;
+    }
+    .about-card h2 {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      color: #fff;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .about-card p {
+      color: #cbd5e1;
+      margin-bottom: 1rem;
+      font-size: 0.98rem;
+    }
+    .features-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.25rem;
+      margin-top: 1.5rem;
+    }
+    .feature-item {
+      background: rgba(10, 18, 12, 0.5);
+      border: 1px solid rgba(52, 211, 153, 0.2);
+      padding: 1.25rem;
+      border-radius: var(--radius-md);
+    }
+    .feature-item h4 {
+      color: #34d399;
+      font-size: 1.05rem;
+      margin-bottom: 0.4rem;
+    }
+    .feature-item p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Fullscreen HD Background Video -->
+  <div class="fullscreen-video-bg">
+    <video src="mk.mp4" autoplay loop muted playsinline></video>
+    <div class="video-overlay-tint"></div>
+    <div class="video-overlay-vignette"></div>
+  </div>
+
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Navbar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <a href="/" class="logo">
+        <div class="logo-icon"><i class="fa-solid fa-bolt"></i></div>
+        <span class="logo-text">Stream<span class="gradient-text">Pulse</span></span>
+      </a>
+      <div class="nav-badges">
+        <a href="/" class="badge badge-glow"><i class="fa-solid fa-house"></i> Home</a>
+        <a href="/contact.html" class="badge badge-secondary"><i class="fa-solid fa-envelope"></i> Contact</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="page-header">
+      <div class="hero-badge animate-float">
+        <span class="pulse-dot"></span>
+        <span>About Our Technology</span>
+      </div>
+      <h1 class="page-title">About <span class="gradient-text">StreamPulse</span></h1>
+      <p style="color: var(--text-muted); font-size: 1.1rem; max-width: 650px; margin: 0 auto;">
+        High-performance, zero-friction YouTube media conversion platform designed for speed, beauty, and privacy.
+      </p>
+    </div>
+
+    <!-- Mission Card -->
+    <div class="about-card glass-card">
+      <h2><i class="fa-solid fa-rocket" style="color: #10b981;"></i> Humara Mission</h2>
+      <p>
+        StreamPulse ko banaya gaya hai taaki internet users bina kisi account creation, irritating pop-up ads ya login hassle ke YouTube videos aur audio ko high quality me download kar sakein.
+      </p>
+      <p>
+        Hum mante hain ki technology ko fast, simple aur visual look me modern hona chahiye. Isi vichaar se humne is animated 3D video downloader ko develop kiya jo standard 1080p se lekar 4K 60FPS Ultra HD tak har format ko support karta hai.
+      </p>
+
+      <div class="features-list">
+        <div class="feature-item">
+          <h4><i class="fa-solid fa-lock-open"></i> No Login Hassle</h4>
+          <p>Koi account create karne ya password yaad rakhne ki jarurat nahi. Bas URL paste karo aur download shuru!</p>
+        </div>
+        <div class="feature-item">
+          <h4><i class="fa-solid fa-microchip"></i> FFmpeg Powered</h4>
+          <p>Cutting-edge FFmpeg backend jo video aur audio ko seamlessly merge karke highest bitrate MP4 aur 320kbps MP3 deliver karta hai.</p>
+        </div>
+        <div class="feature-item">
+          <h4><i class="fa-solid fa-eye-slash"></i> 100% Privacy</h4>
+          <p>Aapki download history sirf aapke local browser me rehti hai. Hum koi personal data track nahi karte.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Creator Contact Card -->
+    <div class="about-card glass-card">
+      <h2><i class="fa-solid fa-user-astronaut" style="color: #38bdf8;"></i> Developer & Contact Info</h2>
+      <p>
+        StreamPulse is maintained with passion for high quality user experience. Agar aapke paas koi suggestion, feedback ya feature request hai toh humse direct sampark karein:
+      </p>
+      
+      <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 1.25rem;">
+        <a href="mailto:kmk93048@gmail.com" class="chip-3d" style="text-decoration: none;">
+          <i class="fa-solid fa-envelope" style="color: #10b981;"></i>
+          <span>kmk93048@gmail.com</span>
+        </a>
+        <a href="https://instagram.com/9496.mk" target="_blank" rel="noopener noreferrer" class="chip-3d" style="text-decoration: none;">
+          <i class="fa-brands fa-instagram" style="color: #e1306c;"></i>
+          <span>Instagram: @9496.mk</span>
+        </a>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="footer">
+    <div style="max-width: 1000px; margin: 0 auto; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem; align-items: center;">
+      <p>© 2026 StreamPulse • All rights reserved</p>
+      <div style="display: flex; gap: 1.2rem; font-size: 0.85rem;">
+        <a href="/" style="color: var(--text-muted); text-decoration: none;">Home</a>
+        <a href="/about.html" style="color: var(--text-muted); text-decoration: none;">About</a>
+        <a href="/privacy.html" style="color: var(--text-muted); text-decoration: none;">Privacy</a>
+        <a href="/terms.html" style="color: var(--text-muted); text-decoration: none;">Terms</a>
+        <a href="/contact.html" style="color: var(--text-muted); text-decoration: none;">Contact</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

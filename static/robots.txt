@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Allow: /about.html
+Allow: /privacy.html
+Allow: /terms.html
+Allow: /contact.html
+Disallow: /api/
+
+Sitemap: https://ytpulse.net/sitemap.xml
