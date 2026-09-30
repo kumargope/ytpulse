@@ -55,29 +55,91 @@ def format_duration(seconds: Optional[int]) -> str:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
 
+def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "mobile") -> dict:
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'js_runtimes': {'node': {}},
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+    }
+    
+    # Configure player client based on strategy
+    if client_type == "mobile":
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['android', 'ios'],
+                'player_skip': ['webpage', 'configs'],
+            }
+        }
+    elif client_type == "ios":
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['ios'],
+                'player_skip': ['webpage', 'configs'],
+            }
+        }
+    elif client_type == "android":
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['android'],
+                'player_skip': ['webpage', 'configs'],
+            }
+        }
+    elif client_type == "mweb":
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['mweb', 'android'],
+            }
+        }
+    
+    # Support cookies file or environment variable
+    cookies_path = Path(__file__).parent / "cookies.txt"
+    env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_DATA")
+    if cookies_path.exists():
+        opts['cookiefile'] = str(cookies_path)
+    elif env_cookies:
+        temp_c = TEMP_DOWNLOAD_DIR / "yt_cookies.txt"
+        temp_c.write_text(env_cookies.strip(), encoding="utf-8")
+        opts['cookiefile'] = str(temp_c)
+
+    if extra_opts:
+        opts.update(extra_opts)
+    return opts
+
 @app.post("/api/info")
 async def get_video_info(req: VideoInfoRequest):
     url = req.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
 
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'extract_flat': False,
-        'js_runtimes': {'node': {}}
-    }
+    info = None
+    last_error = ""
+    # Try mobile clients first to bypass datacenter IP bot detection
+    strategies = ["mobile", "android", "ios", "default"]
 
-    try:
-        loop = asyncio.get_event_loop()
-        def extract():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=False)
+    for strat in strategies:
+        try:
+            ydl_opts = build_ydl_opts({'skip_download': True, 'extract_flat': False}, client_type=strat)
+            loop = asyncio.get_event_loop()
+            def extract(current_opts):
+                with yt_dlp.YoutubeDL(current_opts) as ydl:
+                    return ydl.extract_info(url, download=False)
 
-        info = await loop.run_in_executor(None, extract)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch video: {str(e)}")
+            info = await loop.run_in_executor(None, extract, ydl_opts)
+            if info:
+                break
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    if not info:
+        clean_err = last_error
+        if "Sign in to confirm you're not a bot" in clean_err:
+            clean_err = "YouTube bot protection triggered on cloud IP. Please retry or provide YouTube Cookies."
+        raise HTTPException(status_code=400, detail=f"Failed to fetch video: {clean_err}")
 
     if not info:
         raise HTTPException(status_code=404, detail="No video information found")
@@ -263,30 +325,24 @@ async def download_media(
     if format_type == "audio":
         if bitrate == "original":
             out_template = str(TEMP_DOWNLOAD_DIR / f"{file_prefix}_%(title)s.%(ext)s")
-            ydl_opts = {
+            ydl_opts = build_ydl_opts({
                 'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': out_template,
                 'progress_hooks': [progress_hook],
-                'js_runtimes': {'node': {}},
-                'quiet': True,
-                'no_warnings': True
-            }
+            }, client_type="mobile")
         else:
             out_template = str(TEMP_DOWNLOAD_DIR / f"{file_prefix}_%(title)s.%(ext)s")
             kbps = re.sub(r'\D', '', bitrate) or "192"
-            ydl_opts = {
+            ydl_opts = build_ydl_opts({
                 'format': 'bestaudio/best',
                 'outtmpl': out_template,
                 'progress_hooks': [progress_hook],
-                'js_runtimes': {'node': {}},
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': kbps,
                 }],
-                'quiet': True,
-                'no_warnings': True
-            }
+            }, client_type="mobile")
     else:
         # Video: Exact or best matching height
         height_match = re.search(r'\d+', quality)
@@ -304,15 +360,12 @@ async def download_media(
             f"best"
         )
 
-        ydl_opts = {
+        ydl_opts = build_ydl_opts({
             'format': fmt_string,
             'outtmpl': out_template,
             'merge_output_format': 'mp4',
             'progress_hooks': [progress_hook],
-            'js_runtimes': {'node': {}},
-            'quiet': True,
-            'no_warnings': True
-        }
+        }, client_type="mobile")
 
     try:
         loop = asyncio.get_event_loop()
