@@ -55,7 +55,7 @@ def format_duration(seconds: Optional[int]) -> str:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
 
-def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "mobile") -> dict:
+def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "mobile", use_cookies: bool = False) -> dict:
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -95,15 +95,19 @@ def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "mobile
             }
         }
     
-    # Support cookies file or environment variable
-    cookies_path = Path(__file__).parent / "cookies.txt"
-    env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_DATA")
-    if cookies_path.exists():
-        opts['cookiefile'] = str(cookies_path)
-    elif env_cookies:
-        temp_c = TEMP_DOWNLOAD_DIR / "yt_cookies.txt"
-        temp_c.write_text(env_cookies.strip(), encoding="utf-8")
-        opts['cookiefile'] = str(temp_c)
+    # Support cookies file or environment variable ONLY if use_cookies=True
+    if use_cookies:
+        cookies_path = Path(__file__).parent / "cookies.txt"
+        env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_DATA")
+        if cookies_path.exists():
+            opts['cookiefile'] = str(cookies_path)
+        elif env_cookies:
+            temp_c = TEMP_DOWNLOAD_DIR / "yt_cookies.txt"
+            clean_c = env_cookies.replace('\\n', '\n').strip()
+            if not clean_c.startswith("# Netscape"):
+                clean_c = "# Netscape HTTP Cookie File\n" + clean_c
+            temp_c.write_text(clean_c, encoding="utf-8")
+            opts['cookiefile'] = str(temp_c)
 
     if extra_opts:
         opts.update(extra_opts)
@@ -117,12 +121,24 @@ async def get_video_info(req: VideoInfoRequest):
 
     info = None
     last_error = ""
-    # Try mobile clients first to bypass datacenter IP bot detection
-    strategies = ["mobile", "android", "ios", "default"]
+    # Multi-tier fallback strategy:
+    # 1. Clean Mobile App client without cookies (avoids broken cookie and bypasses bot check)
+    # 2. Mobile App client with cookies
+    # 3. Android client alone
+    # 4. iOS client alone
+    # 5. Default web client with cookies
+    strategies = [
+        ("mobile", False),
+        ("mobile", True),
+        ("android", False),
+        ("ios", False),
+        ("default", True),
+        ("default", False),
+    ]
 
-    for strat in strategies:
+    for client_type, use_cookies in strategies:
         try:
-            ydl_opts = build_ydl_opts({'skip_download': True, 'extract_flat': False}, client_type=strat)
+            ydl_opts = build_ydl_opts({'skip_download': True, 'extract_flat': False}, client_type=client_type, use_cookies=use_cookies)
             loop = asyncio.get_event_loop()
             def extract(current_opts):
                 with yt_dlp.YoutubeDL(current_opts) as ydl:
@@ -137,8 +153,10 @@ async def get_video_info(req: VideoInfoRequest):
 
     if not info:
         clean_err = last_error
-        if "Sign in to confirm you're not a bot" in clean_err:
-            clean_err = "YouTube bot protection triggered on cloud IP. Please retry or provide YouTube Cookies."
+        if "The page needs to be reloaded" in clean_err:
+            clean_err = "YouTube session expired. Retrying connection..."
+        elif "Sign in to confirm you're not a bot" in clean_err:
+            clean_err = "YouTube cloud bot protection. Retrying..."
         raise HTTPException(status_code=400, detail=f"Failed to fetch video: {clean_err}")
 
     if not info:
@@ -370,13 +388,24 @@ async def download_media(
     try:
         loop = asyncio.get_event_loop()
         def run_dl():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                if format_type == "audio" and bitrate != "original":
-                    base, _ = os.path.splitext(filename)
-                    return f"{base}.mp3", info.get('title', 'audio')
-                return filename, info.get('title', 'video')
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    if format_type == "audio" and bitrate != "original":
+                        base, _ = os.path.splitext(filename)
+                        return f"{base}.mp3", info.get('title', 'audio')
+                    return filename, info.get('title', 'video')
+            except Exception:
+                # If clean mobile failed, fallback with cookies
+                fallback_opts = build_ydl_opts(dict(ydl_opts), client_type="default", use_cookies=True)
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    if format_type == "audio" and bitrate != "original":
+                        base, _ = os.path.splitext(filename)
+                        return f"{base}.mp3", info.get('title', 'audio')
+                    return filename, info.get('title', 'video')
 
         final_path_str, video_title = await loop.run_in_executor(None, run_dl)
         final_path = Path(final_path_str)
