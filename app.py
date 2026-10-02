@@ -91,6 +91,11 @@ def build_ydl_opts(extra_opts: Optional[dict] = None) -> dict:
         temp_c.write_text(clean_c, encoding="utf-8")
         opts['cookiefile'] = str(temp_c)
 
+    # Proxy support (Webshare / Residential Proxy for Cloud Datacenter bypass)
+    proxy = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("YTPULSE_PROXY")
+    if proxy:
+        opts['proxy'] = proxy
+
     if extra_opts:
         opts.update(extra_opts)
     return opts
