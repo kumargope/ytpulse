@@ -55,45 +55,36 @@ def format_duration(seconds: Optional[int]) -> str:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
 
-def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "mobile", use_cookies: bool = False) -> dict:
+def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "android", use_cookies: bool = False) -> dict:
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'socket_timeout': 10,
-        'retries': 1,
+        'socket_timeout': 6,
+        'retries': 0,
         'js_runtimes': {'node': {}},
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'com.google.android.youtube/19.29.37 (Linux; U; Android 14) gzip',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
     
     # Configure player client based on strategy
-    if client_type == "mobile":
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['android', 'ios'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        }
-    elif client_type == "ios":
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['ios'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        }
-    elif client_type == "android":
+    if client_type == "android":
         opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['android'],
-                'player_skip': ['webpage', 'configs'],
             }
         }
-    elif client_type == "mweb":
+    elif client_type == "mobile":
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'android'],
+                'player_client': ['android', 'ios'],
+            }
+        }
+    elif client_type == "web":
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['web'],
             }
         }
     
@@ -123,10 +114,11 @@ async def get_video_info(req: VideoInfoRequest):
 
     info = None
     last_error = ""
-    # Ultra-fast strategy (runs in 3-4s, bypasses cloud bot checks)
+    # Lightning-fast strategies (executed in 2-3 seconds, bypassing bot checks)
     strategies = [
+        ("android", False),
         ("mobile", False),
-        ("mobile", True),
+        ("web", True),
     ]
 
     for client_type, use_cookies in strategies:
