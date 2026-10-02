@@ -137,12 +137,7 @@ async def get_video_info(req: VideoInfoRequest):
             continue
 
     if not info:
-        clean_err = last_error
-        if "The page needs to be reloaded" in clean_err:
-            clean_err = "YouTube session expired. Retrying connection..."
-        elif "Sign in to confirm you're not a bot" in clean_err:
-            clean_err = "YouTube cloud bot protection. Retrying..."
-        raise HTTPException(status_code=400, detail=f"Failed to fetch video: {clean_err}")
+        raise HTTPException(status_code=400, detail=f"{last_error}")
 
     if not info:
         raise HTTPException(status_code=404, detail="No video information found")

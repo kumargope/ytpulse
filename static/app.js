@@ -248,34 +248,24 @@ async function fetchVideoInfo(url) {
   spinner.classList.remove('hidden');
   btnFetch.disabled = true;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 45000);
-
   try {
     const response = await fetch('/api/info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-      signal: controller.signal
+      body: JSON.stringify({ url })
     });
-    clearTimeout(timeoutId);
 
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.detail || 'Video fetch karne me problem aayi');
+      throw new Error(data.detail || JSON.stringify(data));
     }
 
     currentVideoData = data;
     renderVideoPreview(data);
-    showToast('Video information loaded successfully!', 'success');
+    showToast('Video loaded successfully!', 'success');
   } catch (err) {
-    clearTimeout(timeoutId);
-    if (err.name === 'AbortError') {
-      showToast('Server response me samay lag raha hai. Kripya dobara try karein.', 'error');
-    } else {
-      showToast(err.message, 'error');
-    }
+    showToast(err.message, 'error');
   } finally {
     btnText.classList.remove('hidden');
     spinner.classList.add('hidden');
