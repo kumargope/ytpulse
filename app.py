@@ -55,52 +55,29 @@ def format_duration(seconds: Optional[int]) -> str:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
 
-def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "android", use_cookies: bool = False) -> dict:
+def build_ydl_opts(extra_opts: Optional[dict] = None) -> dict:
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'socket_timeout': 6,
-        'retries': 0,
+        'socket_timeout': 15,
+        'retries': 2,
+        'remote_components': ['ejs:github'],
         'js_runtimes': {'node': {}},
-        'http_headers': {
-            'User-Agent': 'com.google.android.youtube/19.29.37 (Linux; U; Android 14) gzip',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
     }
     
-    # Configure player client based on strategy
-    if client_type == "android":
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['android'],
-            }
-        }
-    elif client_type == "mobile":
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['android', 'ios'],
-            }
-        }
-    elif client_type == "web":
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['web'],
-            }
-        }
+    # Priority: bundled cookies.txt file, or YOUTUBE_COOKIES environment variable
+    cookies_path = Path(__file__).parent / "cookies.txt"
+    env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_DATA")
     
-    # Support cookies file or environment variable ONLY if use_cookies=True
-    if use_cookies:
-        cookies_path = Path(__file__).parent / "cookies.txt"
-        env_cookies = os.environ.get("YOUTUBE_COOKIES") or os.environ.get("COOKIES_DATA")
-        if cookies_path.exists():
-            opts['cookiefile'] = str(cookies_path)
-        elif env_cookies:
-            temp_c = TEMP_DOWNLOAD_DIR / "yt_cookies.txt"
-            clean_c = env_cookies.replace('\\n', '\n').strip()
-            if not clean_c.startswith("# Netscape"):
-                clean_c = "# Netscape HTTP Cookie File\n" + clean_c
-            temp_c.write_text(clean_c, encoding="utf-8")
-            opts['cookiefile'] = str(temp_c)
+    if cookies_path.exists():
+        opts['cookiefile'] = str(cookies_path)
+    elif env_cookies:
+        temp_c = TEMP_DOWNLOAD_DIR / "yt_cookies.txt"
+        clean_c = env_cookies.replace('\\n', '\n').strip()
+        if not clean_c.startswith("# Netscape"):
+            clean_c = "# Netscape HTTP Cookie File\n" + clean_c
+        temp_c.write_text(clean_c, encoding="utf-8")
+        opts['cookiefile'] = str(temp_c)
 
     if extra_opts:
         opts.update(extra_opts)
@@ -112,32 +89,17 @@ async def get_video_info(req: VideoInfoRequest):
     if not url:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
 
-    info = None
-    last_error = ""
-    # Lightning-fast strategies (executed in 2-3 seconds, bypassing bot checks)
-    strategies = [
-        ("android", False),
-        ("mobile", False),
-        ("web", True),
-    ]
+    ydl_opts = build_ydl_opts({'skip_download': True, 'extract_flat': False})
 
-    for client_type, use_cookies in strategies:
-        try:
-            ydl_opts = build_ydl_opts({'skip_download': True, 'extract_flat': False}, client_type=client_type, use_cookies=use_cookies)
-            loop = asyncio.get_event_loop()
-            def extract(current_opts):
-                with yt_dlp.YoutubeDL(current_opts) as ydl:
-                    return ydl.extract_info(url, download=False)
+    try:
+        loop = asyncio.get_event_loop()
+        def extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=False)
 
-            info = await loop.run_in_executor(None, extract, ydl_opts)
-            if info:
-                break
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    if not info:
-        raise HTTPException(status_code=400, detail=f"{last_error}")
+        info = await loop.run_in_executor(None, extract)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     if not info:
         raise HTTPException(status_code=404, detail="No video information found")
@@ -327,7 +289,7 @@ async def download_media(
                 'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': out_template,
                 'progress_hooks': [progress_hook],
-            }, client_type="mobile")
+            })
         else:
             out_template = str(TEMP_DOWNLOAD_DIR / f"{file_prefix}_%(title)s.%(ext)s")
             kbps = re.sub(r'\D', '', bitrate) or "192"
@@ -340,7 +302,7 @@ async def download_media(
                     'preferredcodec': 'mp3',
                     'preferredquality': kbps,
                 }],
-            }, client_type="mobile")
+            })
     else:
         # Video: Exact or best matching height
         height_match = re.search(r'\d+', quality)
@@ -363,29 +325,18 @@ async def download_media(
             'outtmpl': out_template,
             'merge_output_format': 'mp4',
             'progress_hooks': [progress_hook],
-        }, client_type="mobile")
+        })
 
     try:
         loop = asyncio.get_event_loop()
         def run_dl():
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    filename = ydl.prepare_filename(info)
-                    if format_type == "audio" and bitrate != "original":
-                        base, _ = os.path.splitext(filename)
-                        return f"{base}.mp3", info.get('title', 'audio')
-                    return filename, info.get('title', 'video')
-            except Exception:
-                # If clean mobile failed, fallback with cookies
-                fallback_opts = build_ydl_opts(dict(ydl_opts), client_type="default", use_cookies=True)
-                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    filename = ydl.prepare_filename(info)
-                    if format_type == "audio" and bitrate != "original":
-                        base, _ = os.path.splitext(filename)
-                        return f"{base}.mp3", info.get('title', 'audio')
-                    return filename, info.get('title', 'video')
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if format_type == "audio" and bitrate != "original":
+                    base, _ = os.path.splitext(filename)
+                    return f"{base}.mp3", info.get('title', 'audio')
+                return filename, info.get('title', 'video')
 
         final_path_str, video_title = await loop.run_in_executor(None, run_dl)
         final_path = Path(final_path_str)
