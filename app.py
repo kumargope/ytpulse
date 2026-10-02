@@ -31,6 +31,18 @@ TEMP_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # In-memory progress tracking
 download_progress = {}
 
+@app.get("/api/version")
+async def get_version():
+    c_path = Path(__file__).parent / "cookies.txt"
+    c_exists = c_path.exists()
+    c_size = c_path.stat().st_size if c_exists else 0
+    return {
+        "status": "online",
+        "version": "v2.5-cookies-ejs",
+        "cookies_present": c_exists,
+        "cookies_bytes": c_size
+    }
+
 class VideoInfoRequest(BaseModel):
     url: str
 
