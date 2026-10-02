@@ -59,6 +59,8 @@ def build_ydl_opts(extra_opts: Optional[dict] = None, client_type: str = "mobile
     opts = {
         'quiet': True,
         'no_warnings': True,
+        'socket_timeout': 10,
+        'retries': 1,
         'js_runtimes': {'node': {}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
@@ -121,19 +123,10 @@ async def get_video_info(req: VideoInfoRequest):
 
     info = None
     last_error = ""
-    # Multi-tier fallback strategy:
-    # 1. Clean Mobile App client without cookies (avoids broken cookie and bypasses bot check)
-    # 2. Mobile App client with cookies
-    # 3. Android client alone
-    # 4. iOS client alone
-    # 5. Default web client with cookies
+    # Ultra-fast strategy (runs in 3-4s, bypasses cloud bot checks)
     strategies = [
         ("mobile", False),
         ("mobile", True),
-        ("android", False),
-        ("ios", False),
-        ("default", True),
-        ("default", False),
     ]
 
     for client_type, use_cookies in strategies:
