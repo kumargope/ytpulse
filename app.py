@@ -209,7 +209,7 @@ def build_ydl_opts(cookie_file: Optional[str] = None, extra_opts: Optional[dict]
         'remote_components': ['ejs:github'],
         'extractor_args': {
             'youtube': {
-                'player_client': ['web', 'mweb', 'android', 'ios']
+                'player_client': ['android', 'ios', 'web']
             }
         }
     }
@@ -307,8 +307,28 @@ async def get_video_info(req: VideoInfoRequest):
 
             info = await loop.run_in_executor(None, extract)
         except Exception as e:
-            user_msg = map_extractor_error(str(e))
-            raise HTTPException(status_code=400, detail=user_msg)
+            err_str = str(e).lower()
+            if "bot" in err_str or "confirm you're not a bot" in err_str or "verification" in err_str:
+                try:
+                    def fallback_extract():
+                        fb_opts = build_ydl_opts(cookie_file=None, extra_opts={
+                            'skip_download': True,
+                            'extract_flat': False,
+                            'extractor_args': {
+                                'youtube': {
+                                    'player_client': ['android', 'ios']
+                                }
+                            }
+                        })
+                        with yt_dlp.YoutubeDL(fb_opts) as ydl_fb:
+                            return ydl_fb.extract_info(url, download=False)
+                    info = await loop.run_in_executor(None, fallback_extract)
+                except Exception as fb_err:
+                    user_msg = map_extractor_error(str(fb_err))
+                    raise HTTPException(status_code=400, detail=user_msg)
+            else:
+                user_msg = map_extractor_error(str(e))
+                raise HTTPException(status_code=400, detail=user_msg)
 
     if not info:
         raise HTTPException(status_code=404, detail="No video information found")
@@ -514,8 +534,8 @@ async def download_media(
 
             try:
                 loop = asyncio.get_event_loop()
-                def run_dl():
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                def run_dl(opts_to_use):
+                    with yt_dlp.YoutubeDL(opts_to_use) as ydl:
                         info = ydl.extract_info(valid_url, download=True)
                         filename = ydl.prepare_filename(info)
                         if format_type == "audio" and bitrate != "original":
@@ -523,11 +543,30 @@ async def download_media(
                             return f"{base}.mp3", info.get('title', 'audio')
                         return filename, info.get('title', 'video')
 
-                # Execute with strict resource timeout
-                final_path_str, video_title = await asyncio.wait_for(
-                    loop.run_in_executor(None, run_dl),
-                    timeout=DOWNLOAD_TIMEOUT_SECONDS
-                )
+                try:
+                    final_path_str, video_title = await asyncio.wait_for(
+                        loop.run_in_executor(None, run_dl, ydl_opts),
+                        timeout=DOWNLOAD_TIMEOUT_SECONDS
+                    )
+                except Exception as dl_err:
+                    err_msg = str(dl_err).lower()
+                    if "bot" in err_msg or "confirm you're not a bot" in err_msg or "verification" in err_msg:
+                        fb_opts = build_ydl_opts(cookie_file=None, extra_opts={
+                            'format': 'ba/b' if format_type == 'audio' else 'best[height<=720]/best',
+                            'outtmpl': out_template,
+                            'progress_hooks': [progress_hook],
+                            'extractor_args': {
+                                'youtube': {
+                                    'player_client': ['android', 'ios']
+                                }
+                            }
+                        })
+                        final_path_str, video_title = await asyncio.wait_for(
+                            loop.run_in_executor(None, run_dl, fb_opts),
+                            timeout=DOWNLOAD_TIMEOUT_SECONDS
+                        )
+                    else:
+                        raise dl_err
                 final_path = Path(final_path_str)
 
                 if not final_path.exists():
