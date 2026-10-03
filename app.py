@@ -1,9 +1,12 @@
 import os
 import re
+import json
 import uuid
 import asyncio
 import tempfile
 import urllib.parse
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional
 
@@ -100,16 +103,196 @@ def build_ydl_opts(extra_opts: Optional[dict] = None) -> dict:
         opts.update(extra_opts)
     return opts
 
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "14a4f0702amsh4efb3c1c6719a9fp116bf9jsnb8b41959bb5e")
+RAPIDAPI_HOST = "youtube-video-fast-downloader-24-7.p.rapidapi.com"
+
+def extract_video_id(url: str) -> Optional[str]:
+    patterns = [
+        r'(?:v=|\/videos\/|embed\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|watch\?.+&v=)([\w-]{11})',
+        r'(?:shorts\/)([\w-]{11})',
+        r'^([\w-]{11})$'
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    return None
+
+def fetch_rapidapi_info(video_id: str) -> Optional[dict]:
+    if not RAPIDAPI_KEY:
+        return None
+    api_url = f"https://{RAPIDAPI_HOST}/get-video-info/{video_id}?return_available_quality=true&response_mode=default"
+    req = urllib.request.Request(
+        api_url,
+        headers={
+            'x-rapidapi-host': RAPIDAPI_HOST,
+            'x-rapidapi-key': RAPIDAPI_KEY,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=35) as res:
+            if res.status == 200:
+                return json.loads(res.read().decode('utf-8'))
+    except Exception as e:
+        print(f"RapidAPI info exception: {e}")
+    return None
+
+def fetch_rapidapi_download_file(video_id: str, quality_id: str) -> Optional[dict]:
+    if not RAPIDAPI_KEY:
+        return None
+    api_url = f"https://{RAPIDAPI_HOST}/download_video/{video_id}?quality={quality_id}"
+    req = urllib.request.Request(
+        api_url,
+        headers={
+            'x-rapidapi-host': RAPIDAPI_HOST,
+            'x-rapidapi-key': RAPIDAPI_KEY,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=35) as res:
+            if res.status == 200:
+                return json.loads(res.read().decode('utf-8'))
+    except Exception as e:
+        print(f"RapidAPI download exception: {e}")
+    return None
+
 @app.post("/api/info")
 async def get_video_info(req: VideoInfoRequest):
     url = req.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
 
+    loop = asyncio.get_event_loop()
+    video_id = extract_video_id(url)
+
+    # Priority 1: Try RapidAPI 24/7 Cloud Engine first
+    if video_id and RAPIDAPI_KEY:
+        rapid_data = await loop.run_in_executor(None, fetch_rapidapi_info, video_id)
+        if rapid_data and rapid_data.get('title'):
+            title = rapid_data.get('title', 'YouTube Video')
+            dur = int(rapid_data.get('lengthSeconds') or 0)
+            thumbnail = ""
+            thumbs = rapid_data.get('thumbnail')
+            if isinstance(thumbs, list) and len(thumbs) > 0:
+                thumbnail = thumbs[-1].get('url', '')
+            elif isinstance(thumbs, dict):
+                thumbnail = thumbs.get('url', '')
+            if not thumbnail:
+                thumbnail = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+
+            uploader = rapid_data.get('author') or rapid_data.get('ownerChannelName') or 'YouTube Creator'
+            v_count = int(rapid_data.get('viewCount') or 0)
+
+            qualities = rapid_data.get('availableQuality', [])
+            video_resolutions = {}
+            best_audio_sz = 0
+            best_audio_id = "251"
+
+            for q in qualities:
+                if q.get('type') == 'audio':
+                    sz = q.get('size') or 0
+                    if sz > best_audio_sz:
+                        best_audio_sz = sz
+                        best_audio_id = str(q.get('id', '251'))
+
+            for q in qualities:
+                if q.get('type') == 'video':
+                    lbl = q.get('quality', '')
+                    if not lbl or lbl == 'Unknown':
+                        continue
+                    h = int(re.sub(r'\D', '', lbl) or 0)
+                    if not h:
+                        continue
+
+                    if h >= 4320:
+                        cat, badge, glow = "8K Ultra HD", "8K UHD", "glow-8k"
+                    elif h >= 2160:
+                        cat, badge, glow = "4K Ultra HD", "4K UHD", "glow-4k"
+                    elif h >= 1440:
+                        cat, badge, glow = "2K Quad HD", "2K QHD", "glow-2k"
+                    elif h >= 1080:
+                        cat, badge, glow = "Full HD", "1080p FHD", "glow-1080"
+                    elif h >= 720:
+                        cat, badge, glow = "HD", "720p HD", "glow-720"
+                    elif h >= 480:
+                        cat, badge, glow = "SD", "480p SD", "glow-sd"
+                    elif h >= 360:
+                        cat, badge, glow = "Data Saver", "360p", "glow-sd"
+                    elif h >= 240:
+                        cat, badge, glow = "Low", "240p", "glow-sd"
+                    else:
+                        cat, badge, glow = "Basic", "144p", "glow-sd"
+
+                    raw_sz = q.get('size') or 0
+                    total_sz = (raw_sz + best_audio_sz) if raw_sz else 0
+
+                    if h not in video_resolutions or raw_sz > video_resolutions[h].get('raw_size', 0):
+                        video_resolutions[h] = {
+                            'resolution': f"{h}p",
+                            'display_name': f"{h}p",
+                            'height': h,
+                            'fps': 30,
+                            'category': cat,
+                            'badge': badge,
+                            'glow': glow,
+                            'filesize': total_sz,
+                            'filesize_str': format_bytes(total_sz) if total_sz else "Adaptive",
+                            'rapid_id': str(q.get('id')),
+                            'raw_size': raw_sz
+                        }
+
+            sorted_res = sorted(video_resolutions.values(), key=lambda x: x['height'], reverse=True)
+
+            audio_opts = [
+                {
+                    'bitrate': '320k',
+                    'label': 'Ultra HQ MP3 (320 kbps)',
+                    'desc': 'Best studio sound • High definition audio',
+                    'badge': 'Studio HD',
+                    'ext': 'mp3'
+                },
+                {
+                    'bitrate': '192k',
+                    'label': 'Standard MP3 (192 kbps)',
+                    'desc': 'Balanced size & high clarity audio',
+                    'badge': 'High Quality',
+                    'ext': 'mp3'
+                },
+                {
+                    'bitrate': '128k',
+                    'label': 'Compressed MP3 (128 kbps)',
+                    'desc': 'Fast download • Small file size',
+                    'badge': 'Fast',
+                    'ext': 'mp3'
+                },
+                {
+                    'bitrate': 'original',
+                    'label': 'Original M4A / AAC',
+                    'desc': 'Direct untouched original audio stream',
+                    'badge': 'Lossless',
+                    'ext': 'm4a'
+                }
+            ]
+
+            return {
+                "title": title,
+                "uploader": uploader,
+                "duration": format_duration(dur),
+                "duration_raw": dur,
+                "views": f"{v_count:,}" if v_count else "N/A",
+                "thumbnail": thumbnail,
+                "video_formats": sorted_res,
+                "audio_formats": audio_opts,
+                "url": url,
+                "engine": "rapidapi"
+            }
+
+    # Priority 2: Fallback to yt-dlp
     ydl_opts = build_ydl_opts({'skip_download': True, 'extract_flat': False})
 
     try:
-        loop = asyncio.get_event_loop()
         def extract():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=False)
@@ -298,7 +481,110 @@ async def download_media(
             }
 
     file_prefix = f"yt_{uuid.uuid4().hex[:8]}"
+    video_id = extract_video_id(url)
 
+    # Priority 1: RapidAPI 24/7 Cloud Download Engine
+    if video_id and RAPIDAPI_KEY:
+        try:
+            target_rapid_id = None
+            if format_type == "audio":
+                if bitrate in ["128k", "128"]:
+                    target_rapid_id = "139"
+                elif bitrate in ["192k", "192"]:
+                    target_rapid_id = "140"
+                else:
+                    target_rapid_id = "251"
+            else:
+                h_match = re.search(r'\d+', quality)
+                target_h = int(h_match.group(0)) if h_match else 1080
+                if target_h >= 1080:
+                    target_rapid_id = "270"
+                elif target_h >= 720:
+                    target_rapid_id = "232"
+                elif target_h >= 480:
+                    target_rapid_id = "230"
+                elif target_h >= 360:
+                    target_rapid_id = "230"
+                elif target_h >= 240:
+                    target_rapid_id = "243"
+                else:
+                    target_rapid_id = "269"
+
+            download_progress[task_id] = {
+                "status": "downloading",
+                "percent": 15,
+                "speed": "Ultra Fast",
+                "eta": "Requesting stream from RapidAPI cloud..."
+            }
+
+            loop = asyncio.get_event_loop()
+            file_info = await loop.run_in_executor(None, fetch_rapidapi_download_file, video_id, target_rapid_id)
+            if file_info and file_info.get("file"):
+                file_url = file_info.get("file")
+                
+                # Poll readiness (up to 40 seconds)
+                ready = False
+                for step in range(12):
+                    download_progress[task_id] = {
+                        "status": "downloading",
+                        "percent": min(20 + step * 6, 85),
+                        "speed": "Cloud Processing",
+                        "eta": f"Merging on cloud ({max(5, 30 - step * 3)}s)..."
+                    }
+                    def check_head():
+                        try:
+                            h_req = urllib.request.Request(file_url, headers={'User-Agent': 'Mozilla/5.0'}, method='HEAD')
+                            with urllib.request.urlopen(h_req, timeout=5) as h_res:
+                                return h_res.status == 200
+                        except Exception:
+                            return False
+
+                    ready = await loop.run_in_executor(None, check_head)
+                    if ready:
+                        break
+                    await asyncio.sleep(2.5)
+
+                clean_title = sanitize_filename(f"ytpulse_{video_id}")
+                ext = "mp3" if format_type == "audio" else "mp4"
+                temp_file = TEMP_DOWNLOAD_DIR / f"{file_prefix}_{clean_title}.{ext}"
+
+                def download_stream():
+                    s_req = urllib.request.Request(file_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(s_req, timeout=60) as resp, open(temp_file, "wb") as f_out:
+                        total_sz = int(resp.headers.get("Content-Length", 0)) or 1
+                        downloaded = 0
+                        while True:
+                            chunk = resp.read(64 * 1024)
+                            if not chunk:
+                                break
+                            f_out.write(chunk)
+                            downloaded += len(chunk)
+                            download_progress[task_id] = {
+                                "status": "downloading",
+                                "percent": round(85 + (downloaded / total_sz) * 14, 1),
+                                "speed": "High Speed CDN",
+                                "eta": "Delivering file..."
+                            }
+
+                await loop.run_in_executor(None, download_stream)
+                download_progress[task_id] = {"status": "complete", "percent": 100}
+                background_tasks.add_task(cleanup_file, temp_file)
+                download_name = f"{clean_title}.{ext}"
+                encoded_name = urllib.parse.quote(download_name)
+                media_type = "audio/mpeg" if ext == "mp3" else "video/mp4"
+                headers = {
+                    "Content-Disposition": f"attachment; filename=\"{download_name}\"; filename*=UTF-8''{encoded_name}"
+                }
+                return FileResponse(
+                    path=str(temp_file),
+                    filename=download_name,
+                    media_type=media_type,
+                    headers=headers
+                )
+        except Exception as e:
+            print(f"RapidAPI download fallback to yt-dlp: {e}")
+
+    # Priority 2: Fallback to yt-dlp local / proxy download
     if format_type == "audio":
         if bitrate == "original":
             out_template = str(TEMP_DOWNLOAD_DIR / f"{file_prefix}_%(title)s.%(ext)s")
