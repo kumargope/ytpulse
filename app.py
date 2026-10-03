@@ -41,7 +41,8 @@ async def get_version():
     c_size = c_path.stat().st_size if c_exists else 0
     return {
         "status": "online",
-        "version": "v2.5-cookies-ejs",
+        "version": "v3.0-rapidapi-cloud",
+        "rapidapi_active": bool(RAPIDAPI_KEY),
         "cookies_present": c_exists,
         "cookies_bytes": c_size
     }
@@ -151,7 +152,7 @@ def fetch_rapidapi_download_file(video_id: str, quality_id: str) -> Optional[dic
         }
     )
     try:
-        with urllib.request.urlopen(req, timeout=35) as res:
+        with urllib.request.urlopen(req, timeout=120) as res:
             if res.status == 200:
                 return json.loads(res.read().decode('utf-8'))
     except Exception as e:
@@ -522,14 +523,14 @@ async def download_media(
             if file_info and file_info.get("file"):
                 file_url = file_info.get("file")
                 
-                # Poll readiness (up to 40 seconds)
+                # Poll readiness (up to 75 seconds)
                 ready = False
-                for step in range(12):
+                for step in range(25):
                     download_progress[task_id] = {
                         "status": "downloading",
-                        "percent": min(20 + step * 6, 85),
+                        "percent": min(20 + step * 3, 88),
                         "speed": "Cloud Processing",
-                        "eta": f"Merging on cloud ({max(5, 30 - step * 3)}s)..."
+                        "eta": f"Merging streams on cloud (~{max(5, 75 - step * 3)}s)..."
                     }
                     def check_head():
                         try:
@@ -542,7 +543,7 @@ async def download_media(
                     ready = await loop.run_in_executor(None, check_head)
                     if ready:
                         break
-                    await asyncio.sleep(2.5)
+                    await asyncio.sleep(3)
 
                 clean_title = sanitize_filename(f"ytpulse_{video_id}")
                 ext = "mp3" if format_type == "audio" else "mp4"
@@ -561,7 +562,7 @@ async def download_media(
                             downloaded += len(chunk)
                             download_progress[task_id] = {
                                 "status": "downloading",
-                                "percent": round(85 + (downloaded / total_sz) * 14, 1),
+                                "percent": round(88 + (downloaded / total_sz) * 11, 1),
                                 "speed": "High Speed CDN",
                                 "eta": "Delivering file..."
                             }
@@ -581,8 +582,13 @@ async def download_media(
                     media_type=media_type,
                     headers=headers
                 )
+            else:
+                download_progress[task_id] = {"status": "error", "error": "Cloud conversion timeout. Please try another resolution or click Download again."}
+                raise HTTPException(status_code=504, detail="Cloud conversion timeout. Please try another resolution.")
         except Exception as e:
-            print(f"RapidAPI download fallback to yt-dlp: {e}")
+            err_msg = str(e)
+            download_progress[task_id] = {"status": "error", "error": err_msg}
+            raise HTTPException(status_code=500, detail=err_msg)
 
     # Priority 2: Fallback to yt-dlp local / proxy download
     if format_type == "audio":
