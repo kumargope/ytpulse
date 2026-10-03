@@ -9,3 +9,10 @@ env/
 venv/
 .DS_Store
 Thumbs.db
+
+# YouTube Cookie Files & Secrets (Security Rule 5)
+cookies.txt
+*cookies*.txt
+*.cookie
+*.cookies
+.secure_cookies/
