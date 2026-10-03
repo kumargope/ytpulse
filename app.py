@@ -74,8 +74,8 @@ def validate_youtube_url(raw_url: str) -> str:
 
 def is_cookies_configured() -> bool:
     """Check if server-side authorized cookies are configured without exposing values."""
-    b64 = os.environ.get("YOUTUBE_COOKIES_BASE64")
-    if b64 and b64.strip():
+    c_env = os.environ.get("YOUTUBE_COOKIES_BASE64") or os.environ.get("YOUTUBE_COOKIES")
+    if c_env and c_env.strip():
         return True
     path_env = os.environ.get("YOUTUBE_COOKIES_PATH")
     if path_env and os.path.exists(path_env):
@@ -89,7 +89,7 @@ def is_cookies_configured() -> bool:
 def get_secure_cookie_file():
     """
     Safely resolves server-side cookie file from:
-    1. YOUTUBE_COOKIES_BASE64 (Render secret, base64 decoded to temporary file)
+    1. YOUTUBE_COOKIES_BASE64 or YOUTUBE_COOKIES (Render secret, base64 or Netscape text)
     2. YOUTUBE_COOKIES_PATH (mounted secret file)
     3. Local fallback (cookies.txt on server/machine outside git)
     Deletes any temporary decoded files on exit.
@@ -99,19 +99,23 @@ def get_secure_cookie_file():
     resolved_path = None
 
     try:
-        b64_cookies = os.environ.get("YOUTUBE_COOKIES_BASE64")
-        if b64_cookies and b64_cookies.strip():
-            try:
-                decoded_bytes = base64.b64decode(b64_cookies.strip(), validate=False)
-                temp_cookie_path = SECURE_COOKIE_DIR / f"cookie_{uuid.uuid4().hex}.txt"
-                temp_cookie_path.write_bytes(decoded_bytes)
+        cookie_env = os.environ.get("YOUTUBE_COOKIES_BASE64") or os.environ.get("YOUTUBE_COOKIES")
+        if cookie_env and cookie_env.strip():
+            raw_val = cookie_env.strip()
+            temp_cookie_path = SECURE_COOKIE_DIR / f"cookie_{uuid.uuid4().hex}.txt"
+            if raw_val.startswith("# Netscape") or "\t" in raw_val:
+                temp_cookie_path.write_text(raw_val.replace('\\n', '\n'), encoding="utf-8")
+            else:
                 try:
-                    os.chmod(temp_cookie_path, 0o600)
+                    decoded_bytes = base64.b64decode(raw_val, validate=False)
+                    temp_cookie_path.write_bytes(decoded_bytes)
                 except Exception:
-                    pass
-                resolved_path = str(temp_cookie_path)
+                    temp_cookie_path.write_text(raw_val.replace('\\n', '\n'), encoding="utf-8")
+            try:
+                os.chmod(temp_cookie_path, 0o600)
             except Exception:
                 pass
+            resolved_path = str(temp_cookie_path)
 
         if not resolved_path:
             path_env = os.environ.get("YOUTUBE_COOKIES_PATH")
