@@ -628,10 +628,15 @@ async def proxy_stream(
     if "range" in request.headers:
         fwd_headers["Range"] = request.headers["range"]
 
-    client = httpx.AsyncClient(
-        follow_redirects=True,
-        timeout=httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
-    )
+    proxy = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
+    client_kwargs = {
+        "follow_redirects": True,
+        "timeout": httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=30.0),
+    }
+    if proxy:
+        client_kwargs["proxy"] = proxy
+
+    client = httpx.AsyncClient(**client_kwargs)
 
     try:
         upstream_req = client.build_request(request.method, stream_url, headers=fwd_headers)
