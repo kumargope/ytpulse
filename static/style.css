@@ -835,24 +835,55 @@ body {
   margin-top: 0.15rem;
 }
 
+/* Dual Download Methods Grid */
+.download-methods-header {
+  margin-bottom: 0.65rem;
+  display: flex;
+  align-items: center;
+}
+
+.method-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted, #94a3b8);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.download-buttons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+
+@media (max-width: 650px) {
+  .download-buttons-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Big Download Button */
 .btn-download-big {
   width: 100%;
   background: var(--primary-gradient);
   border: none;
   color: white;
-  padding: 1.1rem;
+  padding: 1rem 1.15rem;
   border-radius: var(--radius-md);
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 800;
   font-family: var(--font-display);
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
+  justify-content: flex-start;
+  gap: 0.85rem;
   box-shadow: 0 4px 25px rgba(255, 51, 75, 0.4);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
 }
 
 .btn-download-big:hover {
@@ -865,6 +896,60 @@ body {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+.btn-download-direct {
+  width: 100%;
+  background: rgba(6, 182, 212, 0.12);
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  color: #38bdf8;
+  padding: 1rem 1.15rem;
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: var(--font-display);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.85rem;
+  box-shadow: 0 4px 20px rgba(6, 182, 212, 0.15);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+}
+
+.btn-download-direct:hover {
+  transform: translateY(-2px);
+  background: rgba(6, 182, 212, 0.24);
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 8px 30px rgba(6, 182, 212, 0.35);
+}
+
+.btn-download-direct:disabled,
+.btn-download-direct.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn-text-block {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.btn-primary-text {
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.btn-sub-text {
+  font-size: 0.72rem;
+  opacity: 0.82;
+  margin-top: 2px;
+  font-weight: 500;
 }
 
 /* Progress Tracker */

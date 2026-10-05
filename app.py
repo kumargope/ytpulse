@@ -11,12 +11,14 @@ import contextlib
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import yt_dlp
+import httpx
+import ipaddress
 
 app = FastAPI(title="StreamPulse YouTube Video Downloader")
 
@@ -28,6 +30,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS, HEAD",
+    "Access-Control-Allow-Headers": "*",
+    "Access-Control-Expose-Headers": "Content-Length, Content-Range, Content-Disposition, Accept-Ranges",
+}
 
 # Ephemeral temporary directory for active processing
 TEMP_DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "yt_downloader_cache"
@@ -71,6 +80,31 @@ def validate_youtube_url(raw_url: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL. Please provide a valid youtube.com or youtu.be link.")
 
     return url
+
+def is_safe_stream_url(url_str: str) -> bool:
+    """Validate that stream_url uses http/https and does not target internal/private network addresses."""
+    try:
+        parsed = urllib.parse.urlparse(url_str)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        blocked_hosts = {
+            "localhost", "127.0.0.1", "0.0.0.0", "::1",
+            "metadata.google.internal", "169.254.169.254"
+        }
+        if hostname in blocked_hosts or hostname.endswith(".localhost"):
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
 
 def is_cookies_configured() -> bool:
     """Check if server-side authorized cookies are configured without exposing values."""
@@ -289,12 +323,14 @@ async def get_version():
         "diagnostics": diag
     }
 
+class ExtractRequest(BaseModel):
+    url: str
+
 class VideoInfoRequest(BaseModel):
     url: str
 
-@app.post("/api/info")
-async def get_video_info(req: VideoInfoRequest):
-    url = validate_youtube_url(req.url)
+async def do_extract_video_info(raw_url: str) -> dict:
+    url = validate_youtube_url(raw_url)
 
     with get_secure_cookie_file() as cookie_file:
         ydl_opts = build_ydl_opts(cookie_file=cookie_file, extra_opts={'skip_download': True, 'extract_flat': False})
@@ -338,18 +374,34 @@ async def get_video_info(req: VideoInfoRequest):
     thumbnail = info.get('thumbnail', '')
     uploader = info.get('uploader', 'Unknown Creator')
     view_count = info.get('view_count', 0)
+    safe_title = sanitize_filename(title)
 
-    # Process all available video/audio options
     formats = info.get('formats', [])
 
-    # Calculate best audio size for combined size estimation
+    # Identify best direct audio stream URL and audio size
     best_audio_size = 0
+    best_audio_url = ""
+    best_audio_ext = "m4a"
+
+    # 1. Prefer pure audio streams with direct URL
     for f in formats:
         if f.get('vcodec') == 'none' and f.get('acodec') != 'none':
             size = f.get('filesize') or f.get('filesize_approx') or 0
             if size > best_audio_size:
                 best_audio_size = size
+            if f.get('url') and not best_audio_url:
+                best_audio_url = f.get('url')
+                best_audio_ext = f.get('ext') or 'm4a'
 
+    # Fallback to any stream with audio if pure audio stream URL not available
+    if not best_audio_url:
+        for f in formats:
+            if f.get('url') and f.get('acodec') != 'none':
+                best_audio_url = f.get('url')
+                best_audio_ext = f.get('ext') or 'mp4'
+                break
+
+    # Build video resolution tiers with direct stream URLs
     video_resolutions = {}
 
     for f in formats:
@@ -385,7 +437,25 @@ async def get_video_info(req: VideoInfoRequest):
         video_size = f.get('filesize') or f.get('filesize_approx') or 0
         total_size = (video_size + best_audio_size) if video_size else 0
 
-        if height not in video_resolutions or total_size > video_resolutions[height]['filesize']:
+        stream_url = f.get('url') or ""
+        ext = f.get('ext') or 'mp4'
+        is_prog = (f.get('acodec') != 'none' and f.get('vcodec') != 'none')
+
+        existing = video_resolutions.get(height)
+        should_replace = False
+        if not existing:
+            should_replace = True
+        elif not existing.get('stream_url') and stream_url:
+            should_replace = True
+        elif stream_url and is_prog and not existing.get('is_progressive'):
+            should_replace = True
+        elif total_size > existing.get('filesize', 0):
+            should_replace = True
+
+        if should_replace:
+            filename_video = f"{safe_title}_{height}p.{ext}"
+            proxy_url = f"/api/proxy?stream_url={urllib.parse.quote(stream_url)}&filename={urllib.parse.quote(filename_video)}" if stream_url else ""
+
             video_resolutions[height] = {
                 'resolution': f"{height}p",
                 'display_name': res_display,
@@ -395,44 +465,80 @@ async def get_video_info(req: VideoInfoRequest):
                 'badge': badge,
                 'glow': glow,
                 'filesize': total_size,
-                'filesize_str': format_bytes(total_size) if total_size else "Adaptive"
+                'filesize_str': format_bytes(total_size) if total_size else "Adaptive",
+                'format_id': f.get('format_id', ''),
+                'ext': ext,
+                'stream_url': stream_url,
+                'direct_url': stream_url,
+                'proxy_url': proxy_url,
+                'is_progressive': is_prog
             }
+
+    # Fallback stream_url for resolutions if some don't have direct url
+    fallback_stream_url = ""
+    for r in video_resolutions.values():
+        if r.get('stream_url'):
+            fallback_stream_url = r['stream_url']
+            break
+    if not fallback_stream_url and best_audio_url:
+        fallback_stream_url = best_audio_url
+
+    for height, r in video_resolutions.items():
+        if not r.get('stream_url') and fallback_stream_url:
+            r['stream_url'] = fallback_stream_url
+            r['direct_url'] = fallback_stream_url
+            r['proxy_url'] = f"/api/proxy?stream_url={urllib.parse.quote(fallback_stream_url)}&filename={urllib.parse.quote(f'{safe_title}_{height}p.mp4')}"
 
     sorted_resolutions = sorted(video_resolutions.values(), key=lambda x: x['height'], reverse=True)
 
-    # Audio format options
-    audio_formats = [
-        {
-            'bitrate': '320k',
-            'label': 'Ultra HQ MP3 (320 kbps)',
-            'desc': 'Best studio sound • High definition audio',
-            'badge': 'Studio HD',
-            'ext': 'mp3'
-        },
-        {
-            'bitrate': '192k',
-            'label': 'Standard MP3 (192 kbps)',
-            'desc': 'Balanced size & high clarity audio',
-            'badge': 'High Quality',
-            'ext': 'mp3'
-        },
-        {
-            'bitrate': '128k',
-            'label': 'Compressed MP3 (128 kbps)',
-            'desc': 'Fast download • Small file size',
-            'badge': 'Fast',
-            'ext': 'mp3'
-        },
-        {
-            'bitrate': 'original',
-            'label': 'Original M4A / AAC',
-            'desc': 'Direct untouched original audio stream',
-            'badge': 'Lossless',
-            'ext': 'm4a'
-        }
+    # Audio format options with direct stream URLs
+    audio_formats = []
+    audio_specs = [
+        {'bitrate': '320k', 'label': 'Ultra HQ MP3 (320 kbps)', 'desc': 'Best studio sound • High definition audio', 'badge': 'Studio HD', 'ext': 'mp3'},
+        {'bitrate': '192k', 'label': 'Standard MP3 (192 kbps)', 'desc': 'Balanced size & high clarity audio', 'badge': 'High Quality', 'ext': 'mp3'},
+        {'bitrate': '128k', 'label': 'Compressed MP3 (128 kbps)', 'desc': 'Fast download • Small file size', 'badge': 'Fast', 'ext': 'mp3'},
+        {'bitrate': 'original', 'label': 'Original M4A / AAC', 'desc': 'Direct untouched original audio stream', 'badge': 'Lossless', 'ext': best_audio_ext or 'm4a'},
     ]
 
+    for aspec in audio_specs:
+        filename_audio = f"{safe_title}_{aspec['bitrate']}.{aspec['ext']}"
+        proxy_audio_url = f"/api/proxy?stream_url={urllib.parse.quote(best_audio_url)}&filename={urllib.parse.quote(filename_audio)}" if best_audio_url else ""
+        audio_formats.append({
+            'bitrate': aspec['bitrate'],
+            'label': aspec['label'],
+            'desc': aspec['desc'],
+            'badge': aspec['badge'],
+            'ext': aspec['ext'],
+            'stream_url': best_audio_url,
+            'direct_url': best_audio_url,
+            'proxy_url': proxy_audio_url
+        })
+
+    # Available stream list for zero server load
+    available_streams = []
+    for f in formats:
+        if f.get('url') and (f.get('vcodec') != 'none' or f.get('acodec') != 'none'):
+            h = f.get('height')
+            res = f"{h}p" if h else "audio"
+            f_ext = f.get('ext') or 'mp4'
+            f_id = f.get('format_id') or 'stream'
+            fname = f"{safe_title}_{res}_{f_id}.{f_ext}"
+            available_streams.append({
+                "format_id": f_id,
+                "ext": f_ext,
+                "resolution": res,
+                "height": h,
+                "fps": f.get('fps'),
+                "filesize": f.get('filesize') or f.get('filesize_approx') or 0,
+                "filesize_str": format_bytes(f.get('filesize') or f.get('filesize_approx')),
+                "stream_url": f.get('url'),
+                "direct_url": f.get('url'),
+                "proxy_url": f"/api/proxy?stream_url={urllib.parse.quote(f.get('url'))}&filename={urllib.parse.quote(fname)}",
+                "is_progressive": (f.get('acodec') != 'none' and f.get('vcodec') != 'none')
+            })
+
     return {
+        "id": info.get('id', ''),
         "title": title,
         "uploader": uploader,
         "duration": format_duration(duration),
@@ -441,8 +547,133 @@ async def get_video_info(req: VideoInfoRequest):
         "thumbnail": thumbnail,
         "video_formats": sorted_resolutions,
         "audio_formats": audio_formats,
+        "streams": available_streams,
         "url": url
     }
+
+@app.options("/api/extract")
+async def extract_options():
+    return Response(status_code=200, headers=CORS_HEADERS)
+
+@app.post("/api/extract")
+@app.get("/api/extract")
+async def extract_endpoint(
+    request: Request,
+    req_body: Optional[ExtractRequest] = None,
+    url: Optional[str] = Query(None)
+):
+    target_url = None
+    if req_body and req_body.url:
+        target_url = req_body.url
+    elif url:
+        target_url = url
+    else:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                target_url = body.get("url")
+        except Exception:
+            pass
+
+    if not target_url:
+        raise HTTPException(status_code=400, detail="Missing YouTube URL")
+
+    data = await do_extract_video_info(target_url)
+    return JSONResponse(content=data, headers=CORS_HEADERS)
+
+@app.options("/api/info")
+async def info_options():
+    return Response(status_code=200, headers=CORS_HEADERS)
+
+@app.post("/api/info")
+@app.get("/api/info")
+async def get_video_info(
+    request: Request,
+    req: Optional[VideoInfoRequest] = None,
+    url: Optional[str] = Query(None)
+):
+    target_url = (req.url if req else None) or url
+    if not target_url:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                target_url = body.get("url")
+        except Exception:
+            pass
+
+    if not target_url:
+        raise HTTPException(status_code=400, detail="Missing YouTube URL")
+
+    data = await do_extract_video_info(target_url)
+    return JSONResponse(content=data, headers=CORS_HEADERS)
+
+@app.options("/api/proxy")
+async def proxy_options():
+    return Response(status_code=200, headers=CORS_HEADERS)
+
+@app.get("/api/proxy")
+@app.head("/api/proxy")
+async def proxy_stream(
+    request: Request,
+    stream_url: str = Query(..., description="Direct video/audio stream URL to proxy"),
+    filename: Optional[str] = Query(None, description="Optional filename for attachment download")
+):
+    if not is_safe_stream_url(stream_url):
+        raise HTTPException(status_code=400, detail="Prohibited or invalid stream URL")
+
+    # Forward essential headers (Range for seeking / resume, User-Agent)
+    fwd_headers = {
+        "User-Agent": request.headers.get("User-Agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    if "range" in request.headers:
+        fwd_headers["Range"] = request.headers["range"]
+
+    client = httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
+    )
+
+    try:
+        upstream_req = client.build_request(request.method, stream_url, headers=fwd_headers)
+        upstream_resp = await client.send(upstream_req, stream=True)
+    except Exception as e:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"Failed to connect to stream: {str(e)}")
+
+    res_headers = {
+        **CORS_HEADERS,
+        "Accept-Ranges": "bytes",
+    }
+
+    for h in ("content-type", "content-length", "content-range", "last-modified", "etag"):
+        val = upstream_resp.headers.get(h)
+        if val:
+            res_headers[h.title()] = val
+
+    if filename:
+        safe_name = sanitize_filename(filename)
+        encoded_name = urllib.parse.quote(safe_name)
+        res_headers["Content-Disposition"] = f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{encoded_name}'
+
+    if request.method == "HEAD":
+        await upstream_resp.aclose()
+        await client.aclose()
+        return Response(status_code=upstream_resp.status_code, headers=res_headers)
+
+    async def stream_generator():
+        try:
+            async for chunk in upstream_resp.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await upstream_resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        stream_generator(),
+        status_code=upstream_resp.status_code,
+        headers=res_headers,
+        media_type=upstream_resp.headers.get("content-type", "application/octet-stream")
+    )
 
 # Progress tracking endpoints
 @app.get("/api/progress/{task_id}")

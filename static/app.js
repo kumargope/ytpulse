@@ -140,6 +140,8 @@ const tabButtons = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
 const btnStartDownload = document.getElementById('btn-start-download');
 const downloadBtnLabel = document.getElementById('download-btn-label');
+const btnDirectDownload = document.getElementById('btn-direct-download');
+const directBtnLabel = document.getElementById('direct-btn-label');
 
 const downloadTracker = document.getElementById('download-tracker');
 const trackerStatus = document.getElementById('tracker-status');
@@ -241,6 +243,20 @@ videoUrlInput.addEventListener('keydown', (e) => {
 });
 
 async function fetchVideoInfo(url) {
+  const cleanUrl = (url || '').trim();
+  if (!cleanUrl) {
+    showToast('Please enter a YouTube video URL', 'error');
+    videoUrlInput.focus();
+    return;
+  }
+
+  // Basic client-side validation
+  if (!cleanUrl.includes('youtube.com') && !cleanUrl.includes('youtu.be')) {
+    showToast('Invalid YouTube URL. Please provide a valid youtube.com or youtu.be link.', 'error');
+    videoUrlInput.focus();
+    return;
+  }
+
   // Set loading state
   const btnText = btnFetch.querySelector('.btn-text');
   const spinner = btnFetch.querySelector('.spinner');
@@ -249,27 +265,74 @@ async function fetchVideoInfo(url) {
   btnFetch.disabled = true;
 
   try {
-    const response = await fetch('/api/info', {
+    let response = await fetch('/api/extract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url: cleanUrl })
     });
+
+    // Fallback to /api/info if /api/extract returned non-ok
+    if (!response.ok) {
+      response = await fetch('/api/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: cleanUrl })
+      });
+    }
 
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.detail || JSON.stringify(data));
+      throw new Error(data.detail || 'Failed to extract video streams');
     }
 
     currentVideoData = data;
     renderVideoPreview(data);
-    showToast('Video loaded successfully!', 'success');
+    showToast('Video and stream links extracted successfully!', 'success');
   } catch (err) {
-    showToast(err.message, 'error');
+    showToast(err.message || 'Error communicating with server', 'error');
   } finally {
     btnText.classList.remove('hidden');
     spinner.classList.add('hidden');
     btnFetch.disabled = false;
+  }
+}
+
+function getActiveFormatData() {
+  if (!currentVideoData) {
+    return { streamUrl: '', proxyUrl: '', filename: 'video.mp4', ext: 'mp4', qualityLabel: '' };
+  }
+
+  const safeTitle = (currentVideoData.title || 'video').replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
+
+  if (selectedFormatType === 'video') {
+    const formats = currentVideoData.video_formats || [];
+    const fmt = formats.find(f => f.resolution === selectedQuality) || formats[0] || {};
+    const ext = fmt.ext || 'mp4';
+    const streamUrl = fmt.stream_url || fmt.direct_url || '';
+    const filename = `${safeTitle}_${fmt.resolution || 'video'}.${ext}`;
+    const proxyUrl = fmt.proxy_url || (streamUrl ? `/api/proxy?stream_url=${encodeURIComponent(streamUrl)}&filename=${encodeURIComponent(filename)}` : '');
+    return {
+      streamUrl,
+      proxyUrl,
+      filename,
+      ext,
+      qualityLabel: fmt.resolution || selectedQuality
+    };
+  } else {
+    const audioFormats = currentVideoData.audio_formats || [];
+    const afmt = audioFormats.find(a => a.bitrate === selectedAudioBitrate) || audioFormats[0] || {};
+    const ext = afmt.ext || 'mp3';
+    const streamUrl = afmt.stream_url || afmt.direct_url || '';
+    const filename = `${safeTitle}_${afmt.bitrate || 'audio'}.${ext}`;
+    const proxyUrl = afmt.proxy_url || (streamUrl ? `/api/proxy?stream_url=${encodeURIComponent(streamUrl)}&filename=${encodeURIComponent(filename)}` : '');
+    return {
+      streamUrl,
+      proxyUrl,
+      filename,
+      ext,
+      qualityLabel: afmt.label || selectedAudioBitrate
+    };
   }
 }
 
@@ -370,52 +433,85 @@ function switchTab(tabName) {
 }
 
 function updateDownloadButtonText() {
+  const active = getActiveFormatData();
+
   if (selectedFormatType === 'video') {
-    downloadBtnLabel.textContent = `Download Video (${selectedQuality} MP4)`;
+    if (downloadBtnLabel) downloadBtnLabel.textContent = `Proxy Stream (${selectedQuality} MP4)`;
+    if (directBtnLabel) directBtnLabel.textContent = `Direct CDN Link (${selectedQuality})`;
   } else {
-    const label = selectedAudioBitrate === 'original' ? 'Original M4A Audio' : `MP3 Audio (${selectedAudioBitrate})`;
-    downloadBtnLabel.textContent = `Download ${label}`;
+    const label = selectedAudioBitrate === 'original' ? 'Original M4A' : `MP3 (${selectedAudioBitrate})`;
+    if (downloadBtnLabel) downloadBtnLabel.textContent = `Proxy Stream (${label})`;
+    if (directBtnLabel) directBtnLabel.textContent = `Direct CDN Link (${label})`;
+  }
+
+  if (btnDirectDownload) {
+    if (active.streamUrl) {
+      btnDirectDownload.href = active.streamUrl;
+      btnDirectDownload.setAttribute('download', active.filename);
+      btnDirectDownload.classList.remove('disabled');
+      btnDirectDownload.removeAttribute('disabled');
+    } else {
+      btnDirectDownload.href = '#';
+      btnDirectDownload.classList.add('disabled');
+    }
   }
 }
 
-// Trigger Download
+// Direct CDN Link Download Click Handler (Zero Server Load)
+if (btnDirectDownload) {
+  btnDirectDownload.addEventListener('click', (e) => {
+    const active = getActiveFormatData();
+    if (!active.streamUrl) {
+      e.preventDefault();
+      showToast('No direct stream URL available for this format', 'error');
+      return;
+    }
+
+    showToast('Opening direct stream from YouTube CDN! Zero server load.', 'success');
+
+    // Save to history
+    saveToHistory({
+      title: currentVideoData?.title || 'YouTube Video',
+      quality: `Direct ${active.qualityLabel}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+  });
+}
+
+// Proxy Stream Download Click Handler (Calls /api/proxy)
 btnStartDownload.addEventListener('click', async () => {
   if (!currentVideoData) return;
 
-  const url = currentVideoData.url;
-  const taskId = 'task_' + Math.random().toString(36).substring(2, 9);
-  activeTaskId = taskId;
+  const active = getActiveFormatData();
+  if (!active.streamUrl && !active.proxyUrl) {
+    showToast('No stream URL available for this quality option', 'error');
+    return;
+  }
 
-  // Show progress tracker
+  const proxyDownloadUrl = active.proxyUrl || `/api/proxy?stream_url=${encodeURIComponent(active.streamUrl)}&filename=${encodeURIComponent(active.filename)}`;
+
+  // Show progress tracker with streaming status
   downloadTracker.classList.remove('hidden');
-  trackerStatus.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Initializing server conversion...`;
-  trackerPercent.textContent = '0%';
-  progressBarFill.style.width = '0%';
-  trackerSpeed.textContent = 'Speed: Preparing...';
-  trackerEta.textContent = 'ETA: Calculating...';
-  btnStartDownload.disabled = true;
+  trackerStatus.innerHTML = `<i class="fa-solid fa-bolt-lightning fa-bounce" style="color: #38bdf8;"></i> Streaming chunked file via proxy (No server disk latency)...`;
+  trackerPercent.textContent = '100%';
+  progressBarFill.style.width = '100%';
+  trackerSpeed.textContent = 'Speed: High-Speed Proxy';
+  trackerEta.textContent = 'Status: Direct Browser Stream';
 
-  // Confetti explosion
   if (typeof confetti === 'function') {
     confetti({
-      particleCount: 80,
-      spread: 70,
+      particleCount: 70,
+      spread: 65,
       origin: { y: 0.6 }
     });
   }
 
-  showToast('Download request sent! Processing video...', 'info');
-
-  // Start polling progress
-  startProgressPolling(taskId);
+  showToast('Starting proxy stream download! File is downloading directly to your browser.', 'success');
 
   // Trigger file download via invisible link
-  const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_type=${selectedFormatType}&quality=${encodeURIComponent(selectedQuality)}&bitrate=${encodeURIComponent(selectedAudioBitrate)}&task_id=${taskId}`;
-  
-  // Create hidden iframe or anchor to prompt browser download
   const link = document.createElement('a');
-  link.href = downloadUrl;
-  link.setAttribute('download', '');
+  link.href = proxyDownloadUrl;
+  link.setAttribute('download', active.filename);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -423,9 +519,13 @@ btnStartDownload.addEventListener('click', async () => {
   // Save to history
   saveToHistory({
     title: currentVideoData.title,
-    quality: selectedFormatType === 'video' ? selectedQuality : (selectedAudioBitrate === 'original' ? 'M4A' : `MP3 ${selectedAudioBitrate}`),
+    quality: `Proxy ${active.qualityLabel}`,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   });
+
+  setTimeout(() => {
+    trackerStatus.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #4ade80;"></i> Download initiated! Check your browser downloads bar.`;
+  }, 2500);
 });
 
 function startProgressPolling(taskId) {

@@ -365,12 +365,30 @@
               </div>
             </div>
 
-            <!-- Download Button -->
+            <!-- Dual Download Options -->
             <div class="action-footer">
-              <button id="btn-start-download" class="btn-download-big">
-                <i class="fa-solid fa-download"></i>
-                <span id="download-btn-label">Download Video (1080p MP4)</span>
-              </button>
+              <div class="download-methods-header">
+                <span class="method-label"><i class="fa-solid fa-cloud-arrow-down"></i> Choose Download Method:</span>
+              </div>
+              <div class="download-buttons-grid">
+                <!-- Option B: Proxy Stream Download (calls /api/proxy) -->
+                <button id="btn-start-download" class="btn-download-big btn-proxy" title="Streams through proxy for clean download with custom filename and CORS bypass">
+                  <i class="fa-solid fa-bolt-lightning"></i>
+                  <div class="btn-text-block">
+                    <span id="download-btn-label" class="btn-primary-text">Proxy Stream Download</span>
+                    <span class="btn-sub-text">Recommended &bull; Clean File &bull; No CORS Block</span>
+                  </div>
+                </button>
+
+                <!-- Option A: Direct Link (Zero server load) -->
+                <a id="btn-direct-download" href="#" target="_blank" rel="noopener noreferrer" download class="btn-download-direct" title="Downloads directly from YouTube CDN with zero server load">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                  <div class="btn-text-block">
+                    <span id="direct-btn-label" class="btn-primary-text">Direct CDN Link</span>
+                    <span class="btn-sub-text">Zero Server Load &bull; Direct Google Stream</span>
+                  </div>
+                </a>
+              </div>
             </div>
 
             <!-- Progress Tracker -->

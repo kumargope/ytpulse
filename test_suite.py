@@ -101,10 +101,54 @@ def test_real_info_extraction():
     assert "audio_formats" in data
     print(f"  PASS: Extracted video '{data['title']}' with {len(data['video_formats'])} video formats & {len(data['audio_formats'])} audio formats.")
 
+def test_extract_endpoint():
+    print("[TEST 6] Testing /api/extract and CORS headers...")
+    # Test OPTIONS preflight
+    opt_res = client.options("/api/extract")
+    assert opt_res.status_code == 200, f"OPTIONS failed: {opt_res.status_code}"
+    assert opt_res.headers.get("access-control-allow-origin") == "*"
+
+    # Test POST /api/extract
+    test_url = "https://www.youtube.com/watch?v=RMsPJnAM768"
+    res = client.post("/api/extract", json={"url": test_url})
+    assert res.status_code == 200, f"Failed extract: {res.text}"
+    assert res.headers.get("access-control-allow-origin") == "*"
+    data = res.json()
+    assert "video_formats" in data
+    assert "audio_formats" in data
+    assert len(data["video_formats"]) > 0
+    fmt = data["video_formats"][0]
+    assert "stream_url" in fmt
+    assert "proxy_url" in fmt
+    assert "direct_url" in fmt
+    print(f"  PASS: /api/extract returned direct streams & CORS headers OK.")
+
+def test_proxy_endpoint():
+    print("[TEST 7] Testing /api/proxy streaming and SSRF protection...")
+    # Test OPTIONS preflight
+    opt_res = client.options("/api/proxy")
+    assert opt_res.status_code == 200
+    assert opt_res.headers.get("access-control-allow-origin") == "*"
+
+    # Test SSRF block
+    ssrf_res = client.get("/api/proxy?stream_url=http://127.0.0.1:8000/private")
+    assert ssrf_res.status_code == 400, "Failed to block private IP SSRF"
+
+    # Test valid streaming proxy on mock stream
+    test_stream = "https://httpbin.org/bytes/512"
+    proxy_res = client.get(f"/api/proxy?stream_url={test_stream}&filename=test_media.mp4")
+    assert proxy_res.status_code == 200, f"Proxy failed: {proxy_res.status_code}"
+    assert proxy_res.headers.get("access-control-allow-origin") == "*"
+    assert "attachment; filename=\"test_media.mp4\"" in proxy_res.headers.get("content-disposition", "")
+    assert len(proxy_res.content) == 512
+    print("  PASS: /api/proxy chunked streaming, CORS headers & SSRF protection verified.")
+
 if __name__ == "__main__":
     test_diagnostics()
     test_url_validation()
     test_cookie_security()
     test_error_mapping()
     test_real_info_extraction()
+    test_extract_endpoint()
+    test_proxy_endpoint()
     print("\nALL TEST SUITE CHECKS PASSED SUCCESSFULLY (100%)!")
