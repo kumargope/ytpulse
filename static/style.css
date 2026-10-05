@@ -853,6 +853,58 @@ body {
   gap: 0.45rem;
 }
 
+.download-hint-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #38bdf8;
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: rgba(56, 189, 248, 0.08);
+  border-left: 3px solid #38bdf8;
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+.download-hint-banner i {
+  font-size: 1.15rem;
+  color: #ff334b;
+}
+
+.download-icon-circle {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  flex-shrink: 0;
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+  animation: downloadPulse 1.8s infinite ease-in-out;
+}
+
+.download-icon-circle.cdn-icon {
+  background: rgba(6, 182, 212, 0.2);
+  color: #38bdf8;
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.25);
+  animation: none;
+}
+
+@keyframes downloadPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 24px rgba(255, 255, 255, 0.5);
+  }
+}
+
 .download-buttons-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

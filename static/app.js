@@ -436,11 +436,11 @@ function updateDownloadButtonText() {
   const active = getActiveFormatData();
 
   if (selectedFormatType === 'video') {
-    if (downloadBtnLabel) downloadBtnLabel.textContent = `Proxy Stream (${selectedQuality} MP4)`;
+    if (downloadBtnLabel) downloadBtnLabel.textContent = `Download Video (${selectedQuality} MP4)`;
     if (directBtnLabel) directBtnLabel.textContent = `Direct CDN Link (${selectedQuality})`;
   } else {
     const label = selectedAudioBitrate === 'original' ? 'Original M4A' : `MP3 (${selectedAudioBitrate})`;
-    if (downloadBtnLabel) downloadBtnLabel.textContent = `Proxy Stream (${label})`;
+    if (downloadBtnLabel) downloadBtnLabel.textContent = `Download Audio (${label})`;
     if (directBtnLabel) directBtnLabel.textContent = `Direct CDN Link (${label})`;
   }
 
