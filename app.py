@@ -193,6 +193,14 @@ def map_extractor_error(err_str: str) -> str:
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
+def make_content_disposition(filename: str) -> str:
+    safe = sanitize_filename(filename)
+    ascii_name = re.sub(r'[^\x20-\x7E]', '_', safe).replace('"', '').strip()
+    if not ascii_name:
+        ascii_name = "download"
+    encoded_name = urllib.parse.quote(safe, safe='')
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
+
 def format_bytes(size: Optional[int]) -> str:
     if not size:
         return "Adaptive"
@@ -651,9 +659,7 @@ async def proxy_stream(
             res_headers[h.title()] = val
 
     if filename:
-        safe_name = sanitize_filename(filename)
-        encoded_name = urllib.parse.quote(safe_name)
-        res_headers["Content-Disposition"] = f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{encoded_name}'
+        res_headers["Content-Disposition"] = make_content_disposition(filename)
 
     if request.method == "HEAD":
         await upstream_resp.aclose()
@@ -812,19 +818,18 @@ async def download_media(
                 safe_title = sanitize_filename(video_title)
                 ext = final_path.suffix.lstrip('.')
                 download_name = f"{safe_title}.{ext}"
-                encoded_name = urllib.parse.quote(download_name)
 
                 background_tasks.add_task(cleanup_file, final_path)
 
                 media_type = "audio/mpeg" if ext == "mp3" else ("audio/mp4" if ext == "m4a" else "video/mp4")
                 headers = {
-                    "Content-Disposition": f"attachment; filename=\"{safe_title}.{ext}\"; filename*=UTF-8''{encoded_name}"
+                    **CORS_HEADERS,
+                    "Content-Disposition": make_content_disposition(download_name)
                 }
 
                 return FileResponse(
                     path=str(final_path),
                     media_type=media_type,
-                    filename=download_name,
                     headers=headers
                 )
 
