@@ -241,11 +241,6 @@ def build_ydl_opts(cookie_file: Optional[str] = None, extra_opts: Optional[dict]
         'socket_timeout': 30,
         'retries': 3,
         'remote_components': ['ejs:github'],
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios', 'web']
-            }
-        }
     }
 
     # Prefer Deno as primary JS runtime; fallback to Node.js

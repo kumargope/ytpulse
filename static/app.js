@@ -300,7 +300,7 @@ async function fetchVideoInfo(url) {
 
 function getActiveFormatData() {
   if (!currentVideoData) {
-    return { streamUrl: '', proxyUrl: '', filename: 'video.mp4', ext: 'mp4', qualityLabel: '' };
+    return { streamUrl: '', proxyUrl: '', filename: 'video.mp4', ext: 'mp4', qualityLabel: '', isProgressive: false };
   }
 
   const safeTitle = (currentVideoData.title || 'video').replace(/[/\\?%*:|"<>]/g, '').trim() || 'video';
@@ -317,7 +317,8 @@ function getActiveFormatData() {
       proxyUrl,
       filename,
       ext,
-      qualityLabel: fmt.resolution || selectedQuality
+      qualityLabel: fmt.resolution || selectedQuality,
+      isProgressive: fmt.is_progressive || false
     };
   } else {
     const audioFormats = currentVideoData.audio_formats || [];
@@ -331,7 +332,8 @@ function getActiveFormatData() {
       proxyUrl,
       filename,
       ext,
-      qualityLabel: afmt.label || selectedAudioBitrate
+      qualityLabel: afmt.label || selectedAudioBitrate,
+      isProgressive: false
     };
   }
 }
@@ -478,54 +480,78 @@ if (btnDirectDownload) {
   });
 }
 
-// Proxy Stream Download Click Handler (Calls /api/proxy)
+// Download Click Handler
 btnStartDownload.addEventListener('click', async () => {
   if (!currentVideoData) return;
 
   const active = getActiveFormatData();
-  if (!active.streamUrl && !active.proxyUrl) {
-    showToast('No stream URL available for this quality option', 'error');
+  const url = currentVideoData.url;
+  const taskId = 'task_' + Math.random().toString(36).substring(2, 9);
+  activeTaskId = taskId;
+
+  // Case 1: Progressive format (video + audio combined) or original audio stream
+  if ((selectedFormatType === 'video' && active.isProgressive && active.proxyUrl) || (selectedFormatType === 'audio' && selectedAudioBitrate === 'original' && active.proxyUrl)) {
+    const proxyDownloadUrl = active.proxyUrl;
+
+    downloadTracker.classList.remove('hidden');
+    trackerStatus.innerHTML = `<i class="fa-solid fa-bolt-lightning fa-bounce" style="color: #38bdf8;"></i> Downloading ${active.qualityLabel} directly to your device...`;
+    trackerPercent.textContent = '100%';
+    progressBarFill.style.width = '100%';
+    trackerSpeed.textContent = 'Speed: High-Speed Direct';
+    trackerEta.textContent = 'Status: Direct Browser Stream';
+
+    if (typeof confetti === 'function') confetti({ particleCount: 70, spread: 65, origin: { y: 0.6 } });
+
+    showToast(`Downloading ${active.qualityLabel}! Saved in your downloads.`, 'success');
+
+    const link = document.createElement('a');
+    link.href = proxyDownloadUrl;
+    link.setAttribute('download', active.filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    saveToHistory({
+      title: currentVideoData.title,
+      quality: active.qualityLabel,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+
+    setTimeout(() => {
+      trackerStatus.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #4ade80;"></i> Download initiated! Check your downloads bar.`;
+    }, 2500);
     return;
   }
 
-  const proxyDownloadUrl = active.proxyUrl || `/api/proxy?stream_url=${encodeURIComponent(active.streamUrl)}&filename=${encodeURIComponent(active.filename)}`;
-
-  // Show progress tracker with streaming status
+  // Case 2: High Definition formats (4K, 2K, 1080p, 720p HD) or converted MP3 (320k)
+  // Uses /api/download so server FFmpeg merges crisp video + high-quality audio into a complete MP4
   downloadTracker.classList.remove('hidden');
-  trackerStatus.innerHTML = `<i class="fa-solid fa-bolt-lightning fa-bounce" style="color: #38bdf8;"></i> Streaming chunked file via proxy (No server disk latency)...`;
-  trackerPercent.textContent = '100%';
-  progressBarFill.style.width = '100%';
-  trackerSpeed.textContent = 'Speed: High-Speed Proxy';
-  trackerEta.textContent = 'Status: Direct Browser Stream';
+  trackerStatus.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Preparing ${active.qualityLabel} with full audio...`;
+  trackerPercent.textContent = '5%';
+  progressBarFill.style.width = '5%';
+  trackerSpeed.textContent = 'Speed: Initializing';
+  trackerEta.textContent = 'Merging video & audio';
+  btnStartDownload.disabled = true;
 
-  if (typeof confetti === 'function') {
-    confetti({
-      particleCount: 70,
-      spread: 65,
-      origin: { y: 0.6 }
-    });
-  }
+  if (typeof confetti === 'function') confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
 
-  showToast('Starting proxy stream download! File is downloading directly to your browser.', 'success');
+  showToast(`Processing ${active.qualityLabel} (Audio + Video Merging)...`, 'info');
 
-  // Trigger file download via invisible link
+  startProgressPolling(taskId);
+
+  const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&format_type=${selectedFormatType}&quality=${encodeURIComponent(selectedQuality)}&bitrate=${encodeURIComponent(selectedAudioBitrate)}&task_id=${taskId}`;
   const link = document.createElement('a');
-  link.href = proxyDownloadUrl;
+  link.href = downloadUrl;
   link.setAttribute('download', active.filename);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 
-  // Save to history
   saveToHistory({
     title: currentVideoData.title,
-    quality: `Proxy ${active.qualityLabel}`,
+    quality: selectedFormatType === 'video' ? selectedQuality : `MP3 ${selectedAudioBitrate}`,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   });
-
-  setTimeout(() => {
-    trackerStatus.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #4ade80;"></i> Download initiated! Check your browser downloads bar.`;
-  }, 2500);
 });
 
 function startProgressPolling(taskId) {
