@@ -7,4 +7,3 @@ Allow: /contact.html
 Disallow: /api/
 
 Sitemap: https://ytpulse-c07q.onrender.com/sitemap.xml
-Sitemap: https://ytpulse.net/sitemap.xml
